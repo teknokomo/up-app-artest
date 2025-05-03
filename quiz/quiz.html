@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>AR Quiz</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- A-Frame и AR.js -->
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+
+  <script>
+    // Компонент для улучшения взаимодействия с объектами
+    AFRAME.registerComponent('clickable-object', {
+      schema: {
+        isHovered: {default: false}
+      },
+
+      init: function() {
+        const el = this.el;
+        const self = this;
+
+        // Сохраняем оригинальный цвет и другие свойства материала
+        const materialAttr = el.getAttribute('material');
+        this.originalColor = materialAttr.color;
+        this.originalEmissive = materialAttr.emissive || '#000000';
+        this.originalEmissiveIntensity = materialAttr.emissiveIntensity || 0;
+
+        // Добавляем обработчики событий
+        el.addEventListener('mouseenter', function() {
+          // Добавляем класс hovering к canvas для изменения курсора
+          const canvas = document.querySelector('.a-canvas');
+          if (canvas) canvas.classList.add('hovering');
+
+          // Добавляем подсветку и контур
+          self.data.isHovered = true;
+          el.setAttribute('material', {
+            color: self.originalColor,
+            emissive: self.originalColor,
+            emissiveIntensity: 0.5,
+            wireframe: true,
+            wireframeLinewidth: 2
+          });
+
+          // Увеличиваем объект при наведении
+          el.setAttribute('scale', '1.1 1.1 1.1');
+
+          // Добавляем пульсацию для привлечения внимания
+          el.setAttribute('animation__pulse', 'property: scale; from: 1.1 1.1 1.1; to: 1.2 1.2 1.2; dir: alternate; loop: true; dur: 500; easing: easeInOutSine');
+        });
+
+        el.addEventListener('mouseleave', function() {
+          // Удаляем класс hovering с canvas
+          const canvas = document.querySelector('.a-canvas');
+          if (canvas) canvas.classList.remove('hovering');
+
+          // Убираем подсветку и контур
+          self.data.isHovered = false;
+          el.setAttribute('material', {
+            color: self.originalColor,
+            emissive: '#000000',
+            emissiveIntensity: 0,
+            wireframe: false
+          });
+
+          // Останавливаем анимацию пульсации
+          el.removeAttribute('animation__pulse');
+
+          // Возвращаем исходный размер
+          el.setAttribute('scale', '1 1 1');
+        });
+      }
+    });
+  </script>
+  <style>
+    /* Стили HUD и интерфейса */
+    body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+    .a-enter-vr { display: none; } /* Скрываем кнопку VR */
+
+    /* Стили для курсора */
+    .a-canvas.a-grab-cursor:hover {
+      cursor: auto !important;
+    }
+
+    /* Переопределяем стиль курсора для всей сцены */
+    .a-canvas {
+      cursor: crosshair !important;
+    }
+
+    /* Стиль курсора при наведении на объект */
+    .a-canvas.hovering {
+      cursor: pointer !important;
+    }
+    .overlay-screen {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(255, 255, 255, 0.8);
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      z-index: 999;
+    }
+    .overlay-screen h1 {
+      font-size: 2em; margin-bottom: 20px;
+    }
+    .overlay-screen button {
+      padding: 10px 20px; font-size: 1.2em; margin: 10px; cursor: pointer;
+      background: rgba(0,0,0,0.2); border: none; border-radius: 5px;
+    }
+    .overlay-screen input, .overlay-screen select {
+      font-size: 1.1em; padding: 5px; margin: 5px;
+      border: 2px solid #444; border-radius: 3px;
+    }
+    #hud {
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.3); color: #fff; padding: 8px 16px;
+      border-radius: 5px; font-size: 1em; display: none;
+      z-index: 999;
+    }
+    #hud span { margin: 0 10px; }
+    #message {
+      position: fixed; bottom: 10%; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: white; padding: 10px 20px;
+      border-radius: 5px; font-size: 1.2em; display: none;
+      z-index: 999;
+    }
+    table { border-collapse: collapse; margin-top: 20px; }
+    table, th, td { border: 1px solid #000; }
+    th, td { padding: 8px 12px; }
+    .highlight { background-color: #ffd; }
+  </style>
+</head>
+<body>
+
+  <!-- Экран приветствия -->
+  <div id="startScreen" class="overlay-screen">
+    <h1>Образовательный AR-квиз</h1>
+    <button id="startButton">Начать</button>
+  </div>
+
+  <!-- Экран ввода имени и выбора предмета -->
+  <div id="userScreen" class="overlay-screen" style="display:none;">
+    <h1>Привет!</h1>
+    <label>Введите свое имя:</label>
+    <input type="text" id="userName" placeholder="Имя" /><br>
+    <label>Выберите предмет:</label>
+    <select id="subjectSelect">
+      <option value="">--</option>
+      <option value="Геология">Геология</option>
+      <option value="Ботаника">Ботаника</option>
+      <option value="Анатомия">Анатомия</option>
+    </select><br>
+    <button id="beginQuizButton">Начать квиз</button>
+  </div>
+
+  <!-- Экран результатов -->
+  <div id="resultScreen" class="overlay-screen" style="display:none;">
+    <h1>Результаты</h1>
+    <div id="scoreText" style="font-size:1.5em; margin-bottom:10px;"></div>
+    <table id="scoreTable">
+      <thead><tr><th>Имя</th><th>Баллы</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div style="margin-top:20px;">
+      <button id="mainMenuButton">В главное меню</button>
+      <button id="restartButton">Начать заново</button>
+      <button id="changeSubjectButton">Выбрать другой предмет</button>
+    </div>
+  </div>
+
+  <!-- HUD во время квиза -->
+  <div id="hud">
+    <span id="levelText">Уровень: 1/10</span>
+    <span id="scoreDisplay">Счет: 0</span>
+  </div>
+  <div id="message"></div>
+
+  <!-- AR-сцена -->
+  <a-scene
+    vr-mode-ui="enabled: false"
+    embedded
+    arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;"
+    renderer="logarithmicDepthBuffer: true; antialias: true; alpha: true">
+
+    <!-- Камера с курсором -->
+    <a-entity camera look-controls="enabled: true" position="0 1.6 0">
+      <a-entity cursor="fuse: false; rayOrigin: mouse;"
+                raycaster="objects: .quiz-shape; far: 20; lineOpacity: 0; showLine: false; interval: 50; origin: 0 0 0; direction: 0 0 -1; useWorldCoordinates: false"></a-entity>
+    </a-entity>
+
+    <!-- Контейнер для объектов квиза -->
+    <a-entity id="quizContainer" position="0 1.6 -3"></a-entity>
+  </a-scene>
+
+  <script>
+    // Логика квиза
+    let level = 1;
+    let score = 0;
+    let attempts = 0;
+    let subject = "";
+    let userName = "";
+    const maxLevels = 10;
+
+    // Определяем, является ли устройство мобильным
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    const hud = document.getElementById('hud');
+    const levelText = document.getElementById('levelText');
+    const scoreDisplay = document.getElementById('scoreDisplay');
+    const messageDiv = document.getElementById('message');
+    const quizContainer = document.getElementById('quizContainer');
+
+    // Демонстрационные игроки (таблица рейтинга)
+    const demoPlayers = [
+      {name: 'Алексей', score: 19},
+      {name: 'Мария', score: 17},
+      {name: 'Дмитрий', score: 15},
+      {name: 'Ольга', score: 13},
+      {name: 'Иван', score: 11}
+    ];
+
+    // Вопросы по предметам
+    const questions = {
+      "Геология": [
+        "Выберите сферический минерал",
+        "Найдите круглый образец породы",
+        "Укажите на сферолит",
+        "Выберите шаровидную knullецию",
+        "Найдите округлый кристалл",
+        "Укажите на сферический агат",
+        "Выберите шаровидный геод",
+        "Найдите круглый образец метеорита",
+        "Укажите на сферический образец лавы",
+        "Выберите шаровидную жеоду"
+      ],
+      "Ботаника": [
+        "Выберите круглый плод",
+        "Найдите сферическое семя",
+        "Укажите на шаровидный цветок",
+        "Выберите круглую ягоду",
+        "Найдите сферический кактус",
+        "Укажите на шаровидный лист",
+        "Выберите круглый корнеплод",
+        "Найдите сферическую спору",
+        "Укажите на шаровидный мох",
+        "Выберите круглый гриб"
+      ],
+      "Анатомия": [
+        "Выберите глазное яблоко",
+        "Найдите сферический сустав",
+        "Укажите на шаровидную клетку",
+        "Выберите круглую эритроцит",
+        "Найдите сферический лимфоцит",
+        "Укажите на шаровидный фолликул",
+        "Выберите круглый нейрон",
+        "Найдите сферический эмбрион",
+        "Укажите на шаровидный орган",
+        "Выберите круглую яйцеклетку"
+      ]
+    };
+
+    document.getElementById('startButton').addEventListener('click', () => {
+      document.getElementById('startScreen').style.display = 'none';
+      document.getElementById('userScreen').style.display = 'flex';
+    });
+
+    document.getElementById('beginQuizButton').addEventListener('click', () => {
+      const nameInput = document.getElementById('userName').value.trim();
+      const subj = document.getElementById('subjectSelect').value;
+      if (nameInput === "" || subj === "") {
+        alert("Пожалуйста, введите имя и выберите предмет.");
+        return;
+      }
+      userName = nameInput;
+      subject = subj;
+      document.getElementById('userScreen').style.display = 'none';
+      startQuiz();
+    });
+
+    document.getElementById('mainMenuButton').addEventListener('click', () => {
+      resetQuiz();
+      document.getElementById('resultScreen').style.display = 'none';
+      document.getElementById('startScreen').style.display = 'flex';
+    });
+
+    document.getElementById('restartButton').addEventListener('click', () => {
+      resetQuiz();
+      document.getElementById('resultScreen').style.display = 'none';
+      startQuiz();
+    });
+
+    document.getElementById('changeSubjectButton').addEventListener('click', () => {
+      resetQuiz();
+      document.getElementById('resultScreen').style.display = 'none';
+      document.getElementById('subjectSelect').value = "";
+      document.getElementById('userScreen').style.display = 'flex';
+    });
+
+    function startQuiz() {
+      level = 1;
+      score = 0;
+      attempts = 0;
+      hud.style.display = 'block';
+      updateHUD();
+
+      // Устанавливаем позицию контейнера в зависимости от типа устройства
+      if (isMobile) {
+        quizContainer.setAttribute('position', '0 1.6 -2.5');
+      } else {
+        quizContainer.setAttribute('position', '0 1.6 -3');
+      }
+
+      nextLevel();
+    }
+
+    function resetQuiz() {
+      // Удаляем все фигуры из сцены
+      clearShapes();
+      level = 1;
+      score = 0;
+      attempts = 0;
+      subject = "";
+      userName = "";
+      hud.style.display = 'none';
+    }
+
+    function updateHUD() {
+      levelText.textContent = 'Уровень: ' + level + '/' + maxLevels;
+      scoreDisplay.textContent = 'Счет: ' + score;
+    }
+
+    function showMessage(text) {
+      messageDiv.textContent = text;
+      messageDiv.style.display = 'block';
+      setTimeout(() => {
+        messageDiv.style.display = 'none';
+      }, 2000);
+    }
+
+    function clearShapes() {
+      while (quizContainer.firstChild) {
+        quizContainer.removeChild(quizContainer.firstChild);
+      }
+    }
+
+    function nextLevel() {
+      clearShapes();
+      attempts = 0;
+      if (level > maxLevels) {
+        endQuiz();
+        return;
+      }
+
+      // Показываем вопрос
+      const questionIndex = level - 1;
+      const question = questions[subject][questionIndex];
+      showMessage(question);
+
+      updateHUD();
+
+      // Создаем 3 фигуры: 1 сфера (правильный) + 2 других (неправильных)
+      const wrongShapes = ['box', 'cylinder', 'cone', 'torus'];
+
+      // Выбираем две случайные различные фигуры для неправильных ответов
+      let idx1 = Math.floor(Math.random() * wrongShapes.length);
+      let shape1 = wrongShapes[idx1];
+      let shape2;
+      do {
+        shape2 = wrongShapes[Math.floor(Math.random() * wrongShapes.length)];
+      } while (shape2 === shape1);
+
+      // Яркие, контрастные цвета для лучшей видимости
+      const brightColors = [
+        '#FF5733', // Ярко-оранжевый
+        '#33FF57', // Ярко-зеленый
+        '#3357FF', // Ярко-синий
+        '#FF33A8', // Ярко-розовый
+        '#FFFF33', // Ярко-желтый
+        '#33FFFF'  // Ярко-голубой
+      ];
+
+      // Выбираем случайные цвета из ярких вариантов
+      const sphereColor = brightColors[Math.floor(Math.random() * brightColors.length)];
+      let color1, color2;
+
+      // Убеждаемся, что все цвета разные
+      do {
+        color1 = brightColors[Math.floor(Math.random() * brightColors.length)];
+      } while (color1 === sphereColor);
+
+      do {
+        color2 = brightColors[Math.floor(Math.random() * brightColors.length)];
+      } while (color2 === sphereColor || color2 === color1);
+
+      // Массив фигур с их свойствами - увеличенные размеры для лучшей видимости
+      let items = [
+        {type: 'sphere', color: sphereColor, correct: true, radius: 0.7},
+        {type: shape1, color: color1, correct: false, size: 1.0},
+        {type: shape2, color: color2, correct: false, size: 1.0}
+      ];
+
+      // Перемешиваем порядок фигур
+      items = shuffleArray(items);
+
+      // Позиции для фигур (в ряд перед пользователем на уровне глаз)
+      // Для мобильных устройств используем другие позиции
+      const positions = isMobile ? [
+        {x: -1.5, y: 0, z: -2.5},
+        {x: 0, y: 0, z: -2.5},
+        {x: 1.5, y: 0, z: -2.5}
+      ] : [
+        {x: -2, y: 0, z: -3},
+        {x: 0, y: 0, z: -3},
+        {x: 2, y: 0, z: -3}
+      ];
+
+      // Создаем сущности
+      items.forEach((item, i) => {
+        const pos = positions[i];
+
+        // Создаем объект напрямую, без вложенной структуры
+        const object = document.createElement('a-entity');
+
+        // Устанавливаем позицию
+        object.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+
+        // Добавляем классы для стилизации и выбора
+        object.setAttribute('class', 'clickable quiz-shape');
+        object.setAttribute('data-correct', item.correct);
+
+        // Устанавливаем геометрию в зависимости от типа
+        if (item.type === 'sphere') {
+          // Для сферы используем больший радиус, чтобы она была заметнее
+          object.setAttribute('geometry', `primitive: sphere; radius: ${item.radius}`);
+        } else {
+          // Для других фигур также увеличиваем размер
+          object.setAttribute('geometry', `primitive: ${item.type}; height: ${item.size}; width: ${item.size}; depth: ${item.size}`);
+        }
+
+        // Добавляем материал с улучшенными свойствами для лучшей видимости
+        object.setAttribute('material', `
+          color: ${item.color};
+          metalness: 0.3;
+          roughness: 0.7;
+          shader: standard;
+          side: double;
+        `);
+
+        // Добавляем компонент для интерактивности
+        object.setAttribute('clickable-object', '');
+
+        // Добавляем обработчик клика напрямую к объекту
+        object.addEventListener('click', onShapeClick);
+
+        // Добавляем объект в контейнер
+        quizContainer.appendChild(object);
+      });
+    }
+
+    function onShapeClick(event) {
+      // Получаем объект, на который кликнули
+      const el = event.currentTarget;
+
+      // Проверяем, является ли объект правильным ответом
+      const correct = el.getAttribute('data-correct') === 'true';
+
+      if (correct) {
+        // Правильный ответ
+        if (attempts === 0) {
+          score += 2;
+          showMessage("Правильно! +2 балла");
+        } else if (attempts === 1) {
+          score += 1;
+          showMessage("Правильно! +1 балл");
+        } else {
+          showMessage("Правильно!");
+        }
+
+        // Анимация правильного ответа - яркая вспышка и увеличение
+        el.setAttribute('animation__correct_scale', 'property: scale; to: 1.5 1.5 1.5; dur: 500; easing: easeOutElastic');
+        el.setAttribute('animation__correct_color', 'property: material.emissiveIntensity; from: 0.5; to: 1; dur: 300; easing: easeInOutQuad');
+
+        // Добавляем эффект вращения для привлечения внимания
+        el.setAttribute('animation__rotate', 'property: rotation; to: 0 360 0; dur: 1000; easing: easeInOutQuad');
+
+        updateHUD();
+        level++;
+        setTimeout(nextLevel, 2000);
+      } else {
+        // Неправильный ответ
+        if (attempts === 0) {
+          attempts = 1;
+          showMessage("Неправильно! Попробуй ещё раз.");
+
+          // Анимация неправильного ответа - красная вспышка
+          el.setAttribute('animation__wrong', 'property: material.color; to: #ff0000; dur: 300; easing: easeInOutQuad');
+
+          // Возвращаем исходный цвет
+          setTimeout(() => {
+            const component = el.components['clickable-object'];
+            if (component) {
+              const originalColor = component.originalColor;
+              el.setAttribute('animation__wrong_revert', `property: material.color; to: ${originalColor}; dur: 300; easing: easeInOutQuad`);
+            }
+          }, 300);
+
+        } else if (attempts === 1) {
+          attempts = 2;
+          showMessage("Подсказка! Ищите сферу.");
+          // Подсветить правильный ответ (сферу)
+          highlightCorrect();
+        }
+      }
+    }
+
+    function highlightCorrect() {
+      // Находим правильный объект
+      const correctObject = quizContainer.querySelector('[data-correct="true"]');
+      if (correctObject) {
+        // Сохраняем оригинальный цвет и свойства материала
+        const component = correctObject.components['clickable-object'];
+        const originalColor = component ? component.originalColor : '#ffff00';
+
+        // Создаем яркий ореол вокруг объекта
+        // Используем яркий цвет и высокую интенсивность свечения, но сохраняем основной цвет объекта
+        correctObject.setAttribute('material', {
+          color: originalColor,  // Сохраняем оригинальный цвет
+          emissive: '#ffff00',   // Добавляем желтое свечение
+          emissiveIntensity: 0.8,
+          opacity: 1.0,          // Полная непрозрачность
+          transparent: false,    // Отключаем прозрачность
+          metalness: 0.5,        // Добавляем металлический блеск
+          roughness: 0.3         // Делаем поверхность более гладкой и блестящей
+        });
+
+        // Добавляем анимацию пульсации размера
+        correctObject.setAttribute('animation__hint_scale', 'property: scale; from: 1; to: 1.3; dir: alternate; loop: 5; dur: 400; easing: easeInOutQuad');
+
+        // Добавляем анимацию вращения для привлечения внимания
+        correctObject.setAttribute('animation__hint_rotate', 'property: rotation; to: 0 360 0; dur: 2000; easing: easeInOutQuad');
+
+        // Добавляем анимацию пульсации свечения
+        correctObject.setAttribute('animation__hint_glow', 'property: material.emissiveIntensity; from: 0.8; to: 1; dir: alternate; loop: 5; dur: 400; easing: easeInOutQuad');
+
+        // Создаем дополнительный эффект - контур вокруг объекта
+        const halo = document.createElement('a-entity');
+        halo.setAttribute('geometry', correctObject.getAttribute('geometry'));
+        halo.setAttribute('position', '0 0 0');
+        halo.setAttribute('material', 'color: #ffff00; opacity: 0.3; transparent: true; side: double');
+        halo.setAttribute('scale', '1.2 1.2 1.2');
+        correctObject.appendChild(halo);
+
+        // Анимируем контур
+        halo.setAttribute('animation__pulse', 'property: scale; from: 1.2 1.2 1.2; to: 1.4 1.4 1.4; dir: alternate; loop: true; dur: 1000; easing: easeInOutSine');
+
+        // Добавляем таймер для возврата к оригинальному виду через 5 секунд
+        setTimeout(() => {
+          if (correctObject.parentNode) { // Проверяем, что объект все еще в сцене
+            // Возвращаем оригинальные свойства материала
+            correctObject.setAttribute('material', {
+              color: originalColor,
+              emissive: component ? component.originalEmissive : '#000000',
+              emissiveIntensity: component ? component.originalEmissiveIntensity : 0,
+              metalness: 0.3,
+              roughness: 0.7
+            });
+
+            // Останавливаем все анимации
+            correctObject.removeAttribute('animation__hint_scale');
+            correctObject.removeAttribute('animation__hint_rotate');
+            correctObject.removeAttribute('animation__hint_glow');
+
+            // Удаляем контур
+            if (halo.parentNode) {
+              correctObject.removeChild(halo);
+            }
+          }
+        }, 5000);
+      }
+    }
+
+    function endQuiz() {
+      hud.style.display = 'none';
+      clearShapes();
+
+      // Отображаем результаты и таблицу лидеров
+      document.getElementById('scoreText').textContent = userName + ', вы набрали ' + score + ' баллов.';
+      const tbody = document.getElementById('scoreTable').getElementsByTagName('tbody')[0];
+      tbody.innerHTML = '';
+
+      // Собираем и сортируем таблицу
+      const tableData = demoPlayers.slice();
+      tableData.push({name: userName, score: score});
+      tableData.sort((a,b) => b.score - a.score);
+
+      // Заполняем таблицу
+      tableData.forEach((p) => {
+        const row = document.createElement('tr');
+        if (p.name === userName && p.score === score) {
+          row.classList.add('highlight');
+        }
+        const nameCell = document.createElement('td');
+        nameCell.textContent = p.name;
+        const scoreCell = document.createElement('td');
+        scoreCell.textContent = p.score;
+        row.appendChild(nameCell);
+        row.appendChild(scoreCell);
+        tbody.appendChild(row);
+      });
+
+      document.getElementById('resultScreen').style.display = 'flex';
+    }
+
+    // Утилиты
+    function shuffleArray(arr) {
+      let a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        let j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+    function randomColor() {
+      const letters = '0123456789ABCDEF';
+      let col = '#';
+      for (let i = 0; i < 6; i++) {
+        col += letters[Math.floor(Math.random() * 16)];
+      }
+      return col;
+    }
+  </script>
+
+</body>
+</html>
