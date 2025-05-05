@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR-Квиз</title>
+    <link rel="stylesheet" href="css/styles.css">
+    
+    <!-- A-Frame и AR.js -->
+    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    
+    <!-- Проверка загрузки библиотек -->
+    <script>
+        window.addEventListener('load', function() {
+            console.log('Checking libraries loaded:');
+            console.log('A-Frame loaded:', typeof AFRAME !== 'undefined');
+            console.log('AR.js loaded:', typeof THREEx !== 'undefined' && typeof THREEx.ArToolkitContext !== 'undefined');
+        });
+    </script>
+    
+    <!-- Основные скрипты приложения -->
+    <script src="js/core/state-manager.js"></script>
+    <script src="js/core/ar-system.js"></script>
+    <script src="js/core/quiz-data.js"></script>
+    <script src="js/core/app.js"></script>
+</head>
+<body>
+    <div id="app-container">
+        <!-- AR сцена с оптимизированными параметрами -->
+        <a-scene id="ar-scene" embedded 
+                arjs="sourceType: webcam; 
+                     debugUIEnabled: false; 
+                     detectionMode: mono_and_matrix; 
+                     maxDetectionRate: 60;
+                     canvasWidth: 1280; 
+                     canvasHeight: 960;"
+                renderer="antialias: true; logarithmicDepthBuffer: true; precision: mediump; alpha: true;"
+                vr-mode-ui="enabled: false">
+            
+            <!-- Добавляем рассеянный свет для улучшения видимости на мобильных -->
+            <a-entity light="type: ambient; color: #BBB"></a-entity>
+            
+            <a-entity id="ar-objects-container"></a-entity>
+            <a-entity camera="fov: 40; near: 0.1; far: 10000;" look-controls="reverseMouseDrag: false;" position="0 1.6 0"
+                      cursor="rayOrigin: mouse; fuse: false;" 
+                      raycaster="objects: .clickable; far: 10000;"></a-entity>
+        </a-scene>
+        
+        <!-- UI Оверлей -->
+        <div id="ui-overlay">
+            <!-- Загрузочный экран -->
+            <div id="loading-screen" class="screen">
+                <div class="loader"></div>
+                <h1>AR-Квиз</h1>
+                <p>Загрузка...</p>
+            </div>
+
+            <!-- Экран ввода имени -->
+            <div id="name-input-screen" class="screen hidden">
+                <h1>Добро пожаловать!</h1>
+                <p>Введите ваше имя:</p>
+                <input type="text" id="playerName" placeholder="Ваше имя" class="name-input" maxlength="20">
+                <button id="submitName" class="primary-button">Продолжить</button>
+            </div>
+            
+            <!-- Обновленный стартовый экран -->
+            <div id="start-screen" class="screen hidden">
+                <h1>AR-Квиз</h1>
+                <p>Образовательная AR игра</p>
+                <div class="button-container">
+                    <button id="start-marker" class="primary-button">
+                        <img src="assets/icons/marker-icon.svg" alt="" class="button-icon">
+                        Начать с меткой
+                    </button>
+                    <button id="start-location" class="primary-button">
+                        <img src="assets/icons/location-icon.svg" alt="" class="button-icon">
+                        Начать с координатами
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Новый экран инструкций для маркерного режима -->
+            <div id="marker-instructions-screen" class="screen hidden">
+                <h2>Инструкция</h2>
+                <p>Распечатайте и положите маркер на стол:</p>
+                <div class="marker-container">
+                    <img src="assets/icons/hiro-marker.png" alt="Маркер Hiro" class="marker-image">
+                    <a href="assets/icons/hiro-marker.png" download class="download-link">Скачать для печати</a>
+                </div>
+                <p>Направьте камеру на маркер. Объекты появятся на нём.</p>
+                <button id="start-marker-ar" class="primary-button">Начать AR</button>
+                <button id="back-to-start" class="secondary-button">Назад</button>
+            </div>
+            
+            <!-- Экран выбора предмета -->
+            <div id="subject-screen" class="screen hidden">
+                <h2>Выберите предмет</h2>
+                <div class="subject-grid">
+                    <div class="subject-card" data-subject="geology">Геология</div>
+                    <div class="subject-card" data-subject="botany">Ботаника</div>
+                    <div class="subject-card" data-subject="anatomy">Анатомия</div>
+                </div>
+            </div>
+            
+            <!-- Экран с уровнями -->
+            <div id="level-screen" class="screen hidden">
+                <h2>Выберите уровень</h2>
+                <div class="level-grid">
+                    <!-- Уровни будут добавлены динамически -->
+                </div>
+                <button id="back-to-subjects" class="secondary-button">Назад</button>
+            </div>
+            
+            <!-- Экран инструкции AR для безмаркерного режима -->
+            <div id="ar-instructions-screen" class="screen hidden">
+                <h2>Инструкция</h2>
+                <p>Наведите камеру на плоскую поверхность. Объекты появятся вокруг вас.</p>
+                <p>Найдите и нажмите на сферу, которая является правильным ответом.</p>
+                <button id="start-ar" class="primary-button">Начать AR</button>
+            </div>
+            
+            <!-- Игровой UI -->
+            <div id="game-ui" class="hidden">
+                <div id="question-container">
+                    <p id="question-text">Вопрос будет здесь</p>
+                </div>
+                <div id="score-container">
+                    <span id="current-score">0</span> / <span id="total-questions">10</span>
+                </div>
+                <button id="exit-game" class="icon-button">✕</button>
+                <!-- Кнопка переключения режима отладки -->
+                <button id="debug-toggle" class="icon-button">🐞</button>
+                <!-- Новая кнопка для установки якоря -->
+                <button id="anchor-toggle" class="icon-button" style="position: absolute; top: 20px; left: 80px;">📍</button>
+            </div>
+            
+            <!-- Экран результатов -->
+            <div id="results-screen" class="screen hidden">
+                <h2>Результаты</h2>
+                <p>Вы набрали <span id="final-score">0</span> из <span id="max-score">10</span></p>
+                <button id="restart-game" class="primary-button">Играть снова</button>
+                <button id="show-leaderboard" class="primary-button">Таблица лидеров</button>
+                <button id="return-to-menu" class="secondary-button">Главное меню</button>
+            </div>
+
+            <!-- Экран таблицы лидеров -->
+            <div id="leaderboard-screen" class="screen hidden">
+                <h2>Таблица лидеров</h2>
+                <div id="leaderboard-table-container">
+                    <!-- Таблица будет генерироваться здесь -->
+                </div>
+                <button id="back-to-results" class="secondary-button">Назад к результатам</button>
+                <button id="leaderboard-return-to-menu" class="secondary-button">Главное меню</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
